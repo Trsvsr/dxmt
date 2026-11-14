@@ -1,3 +1,4 @@
+#include <atomic>
 #include "config/config.hpp"
 #include "d3d11_context_state.hpp"
 #include "d3d11_fence.hpp"
@@ -483,6 +484,14 @@ public:
     default:
       ERR("Unknown query type ", desc.Query);
       return E_FAIL;
+    }
+    if (hr == S_FALSE && desc.Query == D3D11_QUERY_EVENT) {
+      // diagnostic: an event query that stays pending - say what the queue looks like, now and then
+      static std::atomic<uint64_t> pending_polls{0};
+      uint64_t k = pending_polls.fetch_add(1);
+      if (k % 4000 == 3999)
+        WARN("event query still pending after ", k + 1, " polls: queue signaled=", cmd_queue.SignaledEventSeqId(), " current=", cmd_queue.GetCurrentEventSeqId(),
+             " dirty_since_event=", (int)ctx_state.has_dirty_op_since_last_event, " promote_flush=", (int)promote_flush);
     }
     if (hr == S_FALSE && (GetDataFlags & D3D11_ASYNC_GETDATA_DONOTFLUSH) == 0) {
       cmd_queue.CurrentFrameStatistics().event_stall++;
