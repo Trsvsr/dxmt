@@ -1658,7 +1658,15 @@ _MetalLayer_setProps(void *obj) {
     layer.device = (id<MTLDevice>)props->device;
     layer.opaque = props->opaque;
     layer.framebufferOnly = props->framebuffer_only;
+#if TARGET_OS_IPHONE
+    /* A UIView's layer already has the screen's scale, and the system sizes the drawable from bounds x scale when the view is laid
+     * out: a scale multiplied on top of that (the upscaler's) would ask for a drawable larger than what is rendered, and the picture
+     * would sit in a corner of it. The scale is what makes bounds x scale the drawable's size. */
+    layer.contentsScale = layer.bounds.size.width > 0 && props->drawable_width > 0 ? props->drawable_width / layer.bounds.size.width
+                                                                                    : props->contents_scale;
+#else
     layer.contentsScale = props->contents_scale;
+#endif
 #if !TARGET_OS_IPHONE /* always synchronised on iOS */
     layer.displaySyncEnabled = props->display_sync_enabled;
 #endif
