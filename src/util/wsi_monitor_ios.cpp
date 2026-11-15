@@ -3,8 +3,8 @@
  *
  * iOS: one monitor, the device's screen. An HMONITOR is 1. The embedding application says how large the screen is and how
  * fast it refreshes (dxmt_ios_set_screen, in pixels and Hz) before a device is made; until it does, a 13-inch iPad's.
- * The modes offered are the screen itself, a half, two thirds and three quarters of it, and two 16:9 sizes, each at 60 Hz and at
- * the screen's rate.
+ * The modes offered are the screen itself and smaller sizes of its shape (from two fifths of it up: a tablet's screen is a great
+ * many pixels for its GPU), and two 16:9 sizes, each at 60 Hz and at the screen's rate.
  */
 
 #include "wsi_monitor.hpp"
@@ -74,8 +74,9 @@ getDisplayMode(HMONITOR hMonitor, uint32_t modeNumber, WsiMode *pMode) {
   if (hMonitor != kScreen)
     return false;
   // ascending by size; the last pair is the screen itself
-  const uint32_t sizes[][2] = {{1280, 720}, {1920, 1080}, {g_width / 2, g_height / 2}, {g_width * 2 / 3 & ~1u, g_height * 2 / 3 & ~1u},
-                                {g_width * 3 / 4, g_height * 3 / 4}, {g_width, g_height}};
+  const uint32_t sizes[][2] = {{1280, 720}, {1920, 1080}, {g_width * 2 / 5 & ~1u, g_height * 2 / 5 & ~1u},
+                                {g_width * 9 / 20 & ~1u, g_height * 9 / 20 & ~1u}, {g_width / 2, g_height / 2},
+                                {g_width * 2 / 3 & ~1u, g_height * 2 / 3 & ~1u}, {g_width * 3 / 4, g_height * 3 / 4}, {g_width, g_height}};
   const uint32_t rates[2] = {60, g_hz};
   uint32_t nrates = g_hz > 60 ? 2 : 1, nsizes = sizeof sizes / sizeof *sizes;
   if (modeNumber >= nsizes * nrates)
