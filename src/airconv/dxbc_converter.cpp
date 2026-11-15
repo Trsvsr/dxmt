@@ -1,3 +1,6 @@
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #include "dxbc_converter.hpp"
 #include "DXBCParser/BlobContainer.h"
 #include "DXBCParser/ShaderBinary.h"
@@ -212,7 +215,11 @@ void setup_metal_version(llvm::Module &module, SM50_SHADER_METAL_VERSION metal_v
     airLangVersion->addOperand(MDTuple::get(
         context, {createString("Metal"), createUnsignedInteger(3), createUnsignedInteger(2), createUnsignedInteger(0)}
     ));
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    module.setTargetTriple("air64-apple-ios18.0.0"); // Metal 3.2
+#else
     module.setTargetTriple("air64-apple-macosx15.0.0");
+#endif
     break;
   }
   default: {

@@ -13,6 +13,10 @@ llvm_ld_flags_darwin = [
   '-L'+join_paths(native_llvm_path, 'lib'),
   '-lm', '-lz', '-lcurses', '-lxml2'
 ]
+if dxmt_ios
+  # an LLVM built for iOS without zlib, terminfo and libxml2
+  llvm_ld_flags_darwin = [ '-L'+join_paths(native_llvm_path, 'lib'), '-lm' ]
+endif
 
 if native_llvm_path.startswith('/usr/local/opt') or native_llvm_path.startswith('/opt/homebrew/opt')
   homebrew_prefix = native_llvm_path.startswith('/opt/homebrew/opt') ? '/opt/homebrew' : '/usr/local'
@@ -36,6 +40,7 @@ airconv_dep_darwin = declare_dependency(
   link_args           : [ llvm_ld_flags_darwin, llvm_deps ] # meh
 )
 
+if not dxmt_ios
 executable('airconv', airconv_src + airconv_cli_src,
   include_directories : [ dxmt_include_path, llvm_include_path_darwin ],
   cpp_args            : [ airconv_args ],
@@ -43,3 +48,4 @@ executable('airconv', airconv_src + airconv_cli_src,
   link_args           : [ llvm_ld_flags_darwin, llvm_deps ],
   native              : dxmt_crossbuild
 )
+endif

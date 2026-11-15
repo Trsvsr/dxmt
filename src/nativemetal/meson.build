@@ -12,6 +12,15 @@ winemetal_ld_args = [
   '-weak_framework', 'ColorSync',   '-weak_framework', 'Cocoa',
   '-lsqlite3',
 ]
+if dxmt_ios
+  winemetal_ld_args = [
+    '-weak_framework', 'CoreFoundation', '-weak_framework', 'Metal',
+    '-framework', 'MetalFX', '-weak_framework', 'Foundation',
+    '-weak_framework', 'CoreGraphics', '-weak_framework', 'QuartzCore',
+    '-framework', 'UIKit',
+    '-lsqlite3',
+  ]
+endif
 
 winemetal_dll = shared_library('winemetal', winemetal_src,
   name_prefix         : '',

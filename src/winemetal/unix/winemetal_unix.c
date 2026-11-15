@@ -1,13 +1,29 @@
 #include <stdatomic.h>
 #include <dlfcn.h>
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+/* iOS has one display that an application draws on, and none of CoreGraphics' display functions: it is display 1 */
+typedef uint32_t CGDirectDisplayID;
+#define kCGNullDirectDisplay ((CGDirectDisplayID)0)
+static inline CGDirectDisplayID CGMainDisplayID(void) { return 1; }
+#else
 #import <Cocoa/Cocoa.h>
 #import <ColorSync/ColorSync.h>
+#endif
 #import <CoreFoundation/CFRunLoop.h>
 #import <Metal/Metal.h>
 #import <MetalFX/MetalFX.h>
 #import <QuartzCore/QuartzCore.h>
+#if TARGET_OS_IPHONE
+#include <objc/runtime.h>
+#include <objc/message.h>
+#else
 #include "objc/objc-runtime.h"
+#endif
+#if !TARGET_OS_IPHONE
 #include <bootstrap.h>
+#endif
 #include <mach/mach_port.h>
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
@@ -1296,7 +1312,9 @@ _MTLTexture_replaceRegion(void *obj) {
 static NTSTATUS
 _MTLBuffer_didModifyRange(void *obj) {
   struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
+#if !TARGET_OS_IPHONE /* iOS has no managed storage: a buffer's memory is the GPU's own, and there is nothing to tell it */
   [(id<MTLBuffer>)params->handle didModifyRange:NSMakeRange(params->arg, params->ret)];
+#endif
   return STATUS_SUCCESS;
 }
 
@@ -1630,7 +1648,9 @@ _MetalLayer_setProps(void *obj) {
     layer.opaque = props->opaque;
     layer.framebufferOnly = props->framebuffer_only;
     layer.contentsScale = props->contents_scale;
+#if !TARGET_OS_IPHONE /* always synchronised on iOS */
     layer.displaySyncEnabled = props->display_sync_enabled;
+#endif
     layer.drawableSize = CGSizeMake(props->drawable_width, props->drawable_height);
     layer.pixelFormat = to_metal_pixel_format(props->pixel_format);
   });
@@ -1646,7 +1666,11 @@ _MetalLayer_getProps(void *obj) {
   props->opaque = layer.opaque;
   props->framebuffer_only = layer.framebufferOnly;
   props->contents_scale = layer.contentsScale;
+#if TARGET_OS_IPHONE
+  props->display_sync_enabled = true;
+#else
   props->display_sync_enabled = layer.displaySyncEnabled;
+#endif
   props->drawable_height = layer.drawableSize.height;
   props->drawable_width = layer.drawableSize.width;
   props->pixel_format = layer.pixelFormat;
@@ -2290,6 +2314,14 @@ _WMTGetPrimaryDisplayId(void *obj) {
   return STATUS_SUCCESS;
 }
 
+#if TARGET_OS_IPHONE
+static NTSTATUS
+_WMTGetSecondaryDisplayId(void *obj) {
+  struct unixcall_generic_obj_ret *params = obj;
+  params->ret = kCGNullDirectDisplay;
+  return STATUS_SUCCESS;
+}
+#else
 static NTSTATUS
 _WMTGetSecondaryDisplayId(void *obj) {
   struct unixcall_generic_obj_ret *params = obj;
@@ -2318,6 +2350,27 @@ _WMTGetSecondaryDisplayId(void *obj) {
   return STATUS_SUCCESS;
 }
 
+#endif
+
+#if TARGET_OS_IPHONE
+/* the display's gamut is not asked of the system here: sRGB primaries and a D65 white point; the headroom is UIScreen's */
+static NTSTATUS
+_WMTGetDisplayDescription(void *obj) {
+  struct unixcall_generic_obj_ptr_noret *params = obj;
+  struct WMTDisplayDescription *desc_out = params->arg.ptr;
+  desc_out->red_primaries[0] = 0.64f; desc_out->red_primaries[1] = 0.33f;
+  desc_out->green_primaries[0] = 0.30f; desc_out->green_primaries[1] = 0.60f;
+  desc_out->blue_primaries[0] = 0.15f; desc_out->blue_primaries[1] = 0.06f;
+  desc_out->white_points[0] = 0.3127f; desc_out->white_points[1] = 0.3290f;
+  @autoreleasepool {
+    UIScreen *screen = UIScreen.mainScreen;
+    desc_out->maximum_edr_color_component_value = screen.currentEDRHeadroom;
+    desc_out->maximum_reference_edr_color_component_value = 0.0;
+    desc_out->maximum_potential_edr_color_component_value = screen.potentialEDRHeadroom;
+  }
+  return STATUS_SUCCESS;
+}
+#else
 typedef struct icc_XYZ_t {
   uint32_t sig;      // 0x205a5958
   uint32_t reserved; // 0
@@ -2407,6 +2460,8 @@ _WMTGetDisplayDescription(void *obj) {
   return STATUS_SUCCESS;
 }
 
+#endif
+
 struct DisplaySetting {
   uint64_t version;
   enum WMTColorSpace colorspace;
@@ -2415,6 +2470,18 @@ struct DisplaySetting {
 
 struct DisplaySetting g_display_settings[2] = {{0, 0, {}}, {0, 0, {}}};
 
+#if TARGET_OS_IPHONE
+static NTSTATUS
+_MetalLayer_getEDRValue(void *obj) {
+  struct unixcall_generic_obj_ptr_noret *params = obj;
+  CAMetalLayer *layer = (CAMetalLayer *)params->handle;
+  struct WMTEDRValue *value = params->arg.ptr;
+  UIScreen *screen = UIScreen.mainScreen;
+  value->maximum_edr_color_component_value = layer.wantsExtendedDynamicRangeContent ? screen.currentEDRHeadroom : 1.0;
+  value->maximum_potential_edr_color_component_value = screen.potentialEDRHeadroom;
+  return STATUS_SUCCESS;
+}
+#else
 static NTSTATUS
 _MetalLayer_getEDRValue(void *obj) {
   struct unixcall_generic_obj_ptr_noret *params = obj;
@@ -2441,6 +2508,8 @@ _MetalLayer_getEDRValue(void *obj) {
 
   return STATUS_SUCCESS;
 }
+
+#endif
 
 static NTSTATUS
 _MTLLibrary_newFunctionWithConstants(void *obj) {
@@ -2491,6 +2560,24 @@ _WMTUpdateDisplaySetting(void *obj) {
   return STATUS_SUCCESS;
 }
 
+#if TARGET_OS_IPHONE
+static NTSTATUS
+_WMTQueryDisplaySettingForLayer(void *obj) {
+  struct unixcall_query_display_setting_for_layer *params = obj;
+  CAMetalLayer *layer = (CAMetalLayer *)params->layer;
+  struct WMTHDRMetadata *hdr_metadata_out = params->hdr_metadata.ptr;
+  @autoreleasepool {
+  UIScreen *screen = UIScreen.mainScreen;
+  struct DisplaySetting *setting = &g_display_settings[1];
+  *hdr_metadata_out = setting->hdr_metadata;
+  params->version = setting->version;
+  params->colorspace = setting->colorspace;
+  params->edr_value.maximum_edr_color_component_value = layer.wantsExtendedDynamicRangeContent ? screen.currentEDRHeadroom : 1.0;
+  params->edr_value.maximum_potential_edr_color_component_value = screen.potentialEDRHeadroom;
+  }
+  return STATUS_SUCCESS;
+}
+#else
 static NTSTATUS
 _WMTQueryDisplaySettingForLayer(void *obj) {
   struct unixcall_query_display_setting_for_layer *params = obj;
@@ -2524,6 +2611,8 @@ _WMTQueryDisplaySettingForLayer(void *obj) {
 
   return STATUS_SUCCESS;
 }
+
+#endif
 
 static NTSTATUS
 _MTLCommandBuffer_encodeWaitForEvent(void *obj) {
@@ -2656,8 +2745,10 @@ static NTSTATUS
 _MTLBuffer_updateContents(void *obj) {
   struct unixcall_mtlbuffer_updatecontents *params = obj;
   memcpy((void *)((char *)[(id<MTLBuffer>)params->buffer contents] + params->offset), params->data.ptr, params->length);
+#if !TARGET_OS_IPHONE
   if ([(id<MTLBuffer>)params->buffer storageMode] == MTLStorageModeManaged)
     [(id<MTLBuffer>)params->buffer didModifyRange:NSMakeRange(params->offset, params->length)];
+#endif
   return STATUS_SUCCESS;
 }
 
@@ -2748,6 +2839,20 @@ _MTLDevice_newSharedTexture(void *obj) {
   return STATUS_SUCCESS;
 }
 
+#if TARGET_OS_IPHONE
+/* sharing between processes goes through the bootstrap server, which an iOS application cannot register with: there is one process */
+static NTSTATUS
+_WMTBootstrapRegister(void *obj) {
+  return STATUS_UNSUCCESSFUL;
+}
+
+static NTSTATUS
+_WMTBootstrapLookUp(void *obj) {
+  struct unixcall_bootstrap *params = obj;
+  params->mach_port = 0;
+  return STATUS_UNSUCCESSFUL;
+}
+#else
 /* Private API to register a mach port with the bootstrap server */
 extern kern_return_t bootstrap_register2(mach_port_t bp, name_t service_name, mach_port_t sp, int flags);
 
@@ -2777,6 +2882,8 @@ _WMTBootstrapLookUp(void *obj) {
   params->mach_port = rp;
   return ret;
 }
+
+#endif
 
 @protocol MTLDeviceSPI <MTLDevice>
 

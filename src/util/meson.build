@@ -26,7 +26,7 @@ util_src = files([
 
 if not dxmt_crossbuild
   util_src += files([
-    'wsi_monitor_darwin.cpp',          # was wsi_monitor_headless.cpp: no monitors at all
+    dxmt_ios ? 'wsi_monitor_ios.cpp' : 'wsi_monitor_darwin.cpp',     # was wsi_monitor_headless.cpp: no monitors at all
     'wsi_window_headless.cpp',
     'wsi_platform_darwin.cpp',
   ])

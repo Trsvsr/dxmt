@@ -1,3 +1,6 @@
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #include "metallib_writer.hpp"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Constants.h"
@@ -391,12 +394,22 @@ void MetallibWriter::Write(const llvm::Module &module, raw_ostream &OS) {
   header.BitcodeSize = bitcode.size();
 
   header.Type = FileType::MTLBType_Executable; // executable
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  // what the iOS SDK's metallib writes for an iOS 17 target
+  header.Platform = Platform::MTLBPlatform_iOS;
+  header.VersionMajor = 2;
+  header.VersionMinor = 7;
+  header.OS = OS::MTLBOS_iOS;
+  header.OSVersionMajor = 17;
+  header.OSVersionMinor = 0;
+#else
   header.Platform = Platform::MTLBPlatform_macOS;
   header.VersionMajor = 2;
   header.VersionMinor = 7;
   header.OS = OS::MTLBOS_macOS;
   header.OSVersionMajor = 14;
   header.OSVersionMinor = 4;
+#endif
 
   // write to stream
   OS << value(header);

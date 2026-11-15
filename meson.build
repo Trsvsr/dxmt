@@ -7,7 +7,11 @@ project('dxmt', ['c', 'cpp'], version : 'v0.1', meson_version: '>=1.3.0', defaul
 
 fs = import('fs')
 
-dxmt_crossbuild = meson.is_cross_build()
+# a cross build for Windows is the Wine build; one for iOS is the native build, for another Apple platform
+dxmt_ios = host_machine.subsystem() == 'ios'
+dxmt_crossbuild = meson.is_cross_build() and not dxmt_ios
+metal_sdk = dxmt_ios ? 'iphoneos' : 'macosx'
+metal_target = dxmt_ios ? 'air64-apple-ios17.0' : 'air64-apple-macos14.0'
 
 cpp = meson.get_compiler('cpp')
 cc = meson.get_compiler('c')
@@ -116,12 +120,12 @@ xcrun = find_program('xcrun')
 
 metalir_generator = generator(xcrun,
   output    : [ '@BASENAME@.air'],
-  arguments : [ '-sdk', 'macosx', 'metal', '-o', '@OUTPUT@', '-c', '@INPUT@', '@EXTRA_ARGS@'],
+  arguments : [ '-sdk', metal_sdk, 'metal', '-o', '@OUTPUT@', '-c', '@INPUT@', '@EXTRA_ARGS@'],
 )
 
 metallib_generator = generator(xcrun,
   output    : [ '@BASENAME@.metallib'],
-  arguments : [ '-sdk', 'macosx', 'metallib', '-o', '@OUTPUT@', '@INPUT@'],
+  arguments : [ '-sdk', metal_sdk, 'metallib', '-o', '@OUTPUT@', '@INPUT@'],
 )
 
 xxd = find_program('xxd')
