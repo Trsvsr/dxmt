@@ -27,6 +27,17 @@ static inline CGDirectDisplayID CGMainDisplayID(void) { return 1; }
 #include <mach/mach_port.h>
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
+
+/* Managed storage (a copy in system memory and one on the GPU, kept in step by didModifyRange) is macOS's. On iOS there is one
+ * memory: what was asked for as managed is shared, which is the same thing to the caller with nothing to keep in step. */
+static inline MTLResourceOptions
+wmt_resource_options(uint64_t options) {
+#if TARGET_OS_IPHONE
+  if ((options & MTLResourceStorageModeMask) == (1u << MTLResourceStorageModeShift))
+    options = (options & ~(uint64_t)MTLResourceStorageModeMask) | MTLResourceStorageModeShared;
+#endif
+  return (MTLResourceOptions)options;
+}
 #include "../airconv_thunks.h"
 
 typedef int NTSTATUS;
@@ -177,10 +188,10 @@ _MTLDevice_newBuffer(void *obj) {
   if (info->memory.ptr) {
     buffer = [device newBufferWithBytesNoCopy:info->memory.ptr
                                        length:info->length
-                                      options:(enum MTLResourceOptions)info->options
+                                      options:wmt_resource_options(info->options)
                                   deallocator:NULL];
   } else {
-    buffer = [device newBufferWithLength:info->length options:(enum MTLResourceOptions)info->options];
+    buffer = [device newBufferWithLength:info->length options:wmt_resource_options(info->options)];
     info->memory.ptr = [buffer storageMode] == MTLStorageModePrivate ? NULL : [buffer contents];
   }
   params->ret = (obj_handle_t)buffer;
@@ -265,7 +276,7 @@ fill_texture_descriptor(MTLTextureDescriptor *desc, struct WMTTextureInfo *info)
   desc.mipmapLevelCount = info->mipmap_level_count;
   desc.sampleCount = info->sample_count;
   desc.usage = (MTLTextureUsage)info->usage;
-  desc.resourceOptions = (MTLResourceOptions)info->options;
+  desc.resourceOptions = wmt_resource_options(info->options);
 };
 
 void
@@ -1879,7 +1890,9 @@ _MTLCommandEncoder_setLabel(void *args) {
 static NTSTATUS
 _MTLDevice_setShouldMaximizeConcurrentCompilation(void *args) {
   struct unixcall_generic_obj_uint64_noret *params = args;
-  [(id<MTLDevice>)params->handle setShouldMaximizeConcurrentCompilation:(BOOL)params->arg];
+  // a macOS device's property: an iOS device does not have it
+  if ([(id)params->handle respondsToSelector:@selector(setShouldMaximizeConcurrentCompilation:)])
+    [(id<MTLDevice>)params->handle setShouldMaximizeConcurrentCompilation:(BOOL)params->arg];
   return STATUS_SUCCESS;
 }
 
@@ -3128,7 +3141,7 @@ _MTLDevice_newHeap(void *obj) {
   id<MTLDevice> device = (id<MTLDevice>)params->device;
   struct WMTHeapInfo const *info = params->info.ptr;
   MTLHeapDescriptor *desc = [[MTLHeapDescriptor alloc] init];
-  desc.resourceOptions = (MTLResourceOptions)info->options;
+  desc.resourceOptions = wmt_resource_options(info->options);
   desc.sparsePageSize = (MTLSparsePageSize)info->sparse_page_size;
   desc.type = (MTLHeapType)info->type;
   desc.size = info->size;
@@ -3144,7 +3157,7 @@ _MTLDevice_heapBufferSizeAndAlign(void *obj) {
   struct unixcall_mtldevice_heapbuffersizeandalign *params = obj;
   id<MTLDevice> device = (id<MTLDevice>)params->device;
   MTLSizeAndAlign ret =
-      [device heapBufferSizeAndAlignWithLength:params->length options:(MTLResourceOptions)params->options];
+      [device heapBufferSizeAndAlignWithLength:params->length options:wmt_resource_options(params->options)];
   params->ret_size = ret.size;
   params->ret_align = ret.align;
   return STATUS_SUCCESS;
@@ -3171,10 +3184,10 @@ _MTLHeap_newBuffer(void *obj) {
   struct WMTBufferInfo *info = params->info.ptr;
   id<MTLBuffer> buffer;
   if (~params->offset == 0)
-    buffer = [heap newBufferWithLength:info->length options:(enum MTLResourceOptions)info->options];
+    buffer = [heap newBufferWithLength:info->length options:wmt_resource_options(info->options)];
   else
     buffer =
-        [heap newBufferWithLength:info->length options:(enum MTLResourceOptions)info->options offset:params->offset];
+        [heap newBufferWithLength:info->length options:wmt_resource_options(info->options) offset:params->offset];
   info->memory.ptr = [heap storageMode] == MTLStorageModePrivate ? NULL : [buffer contents];
 
   params->ret = (obj_handle_t)buffer;
@@ -3240,7 +3253,7 @@ _MTLDevice_newIndirectCommandBuffer(void *obj) {
   id<MTLIndirectCommandBuffer> icb =
       [device newIndirectCommandBufferWithDescriptor:desc
                                      maxCommandCount:params->max_count
-                                             options:(MTLResourceOptions)params->options];
+                                             options:wmt_resource_options(params->options)];
   params->ret = (obj_handle_t)icb;
   info->gpu_resource_id = [icb gpuResourceID]._impl;
   [desc release];
