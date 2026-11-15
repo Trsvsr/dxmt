@@ -1,4 +1,9 @@
 #include "d3d11_swapchain.hpp"
+#include <algorithm>
+#include <cmath>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #include "com/com_guid.hpp"
 #include "config/config.hpp"
 #include "d3d11_private.h"
@@ -141,6 +146,11 @@ public:
 
     if constexpr (EnableMetalFX) {
       scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f);
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+      // iOS: the factor is found for each back buffer size (FitScaleFactor); the option is the most it may be
+      max_scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 3), 1.0f);
+      scale_factor = 1.0f;
+#endif
     }
 
     presenter = Rc(new Presenter(pDevice->GetMTLDevice(), layer_weak_,
@@ -501,6 +511,7 @@ public:
       backbuffer_desc_.Height = desc_.Height;
     }
 
+    FitScaleFactor();
     ApplyLayerProps();
 
     backbuffer_desc_.Format = desc_.Format;
@@ -516,8 +527,8 @@ public:
 
     if constexpr (EnableMetalFX) {
       D3D11_TEXTURE2D_DESC1 upscaled_desc_ = backbuffer_desc_;
-      upscaled_desc_.Height *= scale_factor;
-      upscaled_desc_.Width *= scale_factor;
+      upscaled_desc_.Height = ScaledHeight();
+      upscaled_desc_.Width = ScaledWidth();
       upscaled_backbuffer_ = nullptr;
       if (FAILED(dxmt::CreateDeviceTexture2D(
               device_, &upscaled_desc_, nullptr, reinterpret_cast<ID3D11Texture2D1 **>(&upscaled_backbuffer_)
@@ -527,8 +538,8 @@ public:
       WMTFXSpatialScalerInfo info;
       info.input_height = desc_.Height;
       info.input_width = desc_.Width;
-      info.output_height = desc_.Height * scale_factor;
-      info.output_width = desc_.Width * scale_factor;
+      info.output_height = ScaledHeight();
+      info.output_width = ScaledWidth();
       info.color_format = backbuffer_->texture()->pixelFormat();
       info.output_format =upscaled_backbuffer_->texture()->pixelFormat();
       metalfx_scaler = new SpatialScaler(device_->GetMTLDevice(), info);
@@ -579,6 +590,24 @@ public:
     return S_OK;
   };
 
+  /* iOS: a game is run at less than the screen's resolution (a tablet's screen is a great many pixels for its GPU), and the
+   * scaler's output is the largest of the back buffer's shape that the screen holds: a back buffer of half the screen is doubled,
+   * one of the screen's own size is presented as it is. */
+  void FitScaleFactor() {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    if constexpr (EnableMetalFX) {
+      wsi::WsiMode mode;
+      scale_factor = 1.0f;
+      if (desc_.Width && desc_.Height && wsi::getCurrentDisplayMode(monitor_, &mode) && mode.width && mode.height)
+        scale_factor = std::clamp(std::min((float)mode.width / desc_.Width, (float)mode.height / desc_.Height), 1.0f, max_scale_factor);
+    }
+#endif
+  }
+
+  // the output's size: the back buffer's by the factor, rounded once so that every user of it has the same number
+  UINT ScaledWidth() const { return (UINT)std::lround((double)desc_.Width * scale_factor); }
+  UINT ScaledHeight() const { return (UINT)std::lround((double)desc_.Height * scale_factor); }
+
   void ApplyLayerProps() {
     auto target_color_space =
         ConvertColorSpace(desc_.Format == DXGI_FORMAT_R16G16B16A16_FLOAT
@@ -586,8 +615,8 @@ public:
                               : colorspace_,
                           LayerSupportEDR());
     if (presenter->changeLayerProperties(
-            ConvertSwapChainFormat(desc_.Format), target_color_space, desc_.Width * scale_factor,
-            desc_.Height * scale_factor, desc_.SampleDesc.Count
+            ConvertSwapChainFormat(desc_.Format), target_color_space, ScaledWidth(),
+            ScaledHeight(), desc_.SampleDesc.Count
         ))
       device_context_->WaitUntilGPUIdle();
   };
@@ -792,8 +821,13 @@ public:
         scaler_info.input_height = backbuffer->height();
         scaler_info.output_width = upscaled->width();
         scaler_info.output_height = upscaled->height();
-        ctx.upscale(backbuffer, upscaled, scaler);
-        ctx.present(upscaled, presenter, vsync_duration, state.metadata);
+        if (upscaled->width() == backbuffer->width() && upscaled->height() == backbuffer->height()) {
+          // nothing to scale (the back buffer is the output's size)
+          ctx.present(backbuffer, presenter, vsync_duration, state.metadata);
+        } else {
+          ctx.upscale(backbuffer, upscaled, scaler);
+          ctx.present(upscaled, presenter, vsync_duration, state.metadata);
+        }
         ReleaseSemaphore(present_semaphore_, 1, nullptr);
         this->UpdateStatistics(ctx.queue().statistics, ctx.currentFrameId());
       });
@@ -1091,6 +1125,7 @@ private:
   std::conditional<EnableMetalFX, Rc<SpatialScaler>, std::monostate>::type metalfx_scaler;
   std::conditional<EnableMetalFX, Com<D3D11ResourceCommon>, std::monostate>::type upscaled_backbuffer_;
   float scale_factor = 1.0;
+  float max_scale_factor = 1.0;
 };
 
 HRESULT
@@ -1124,7 +1159,12 @@ CreateSwapChain(
   if (ConvertSwapChainFormat(pDesc->Format) == WMTPixelFormatInvalid) {
     return E_INVALIDARG;
   }
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  // on iOS the scaler is used unless it is turned off: without it a game at less than the screen's size is stretched plainly
+  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") != "0") {
+#else
   if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1") {
+#endif
     if (pDevice->GetMTLDevice().supportsFXSpatialScaler()) {
       *ppSwapChain = new MTLD3D11SwapChain<true>(
           pFactory, pDevice, layer_factory.ptr(), hWnd, pDesc, pFullscreenDesc
