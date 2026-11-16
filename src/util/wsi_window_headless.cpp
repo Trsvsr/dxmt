@@ -46,8 +46,10 @@ void resizeWindow(HWND hWindow, DXMTWindowState *pState, uint32_t width,
     host((void *)hWindow, width, height);
 }
 
+/* The display's mode is never changed: the host's window shows a picture of any size on the display as it is. So the
+ * mode a swap chain asks for on its way into fullscreen is "set", and there is nothing to restore. */
 bool setWindowMode(HMONITOR hMonitor, HWND hWindow, const WsiMode &mode) {
-  return false;
+  return true;
 }
 
 bool enterFullscreenMode(HMONITOR hMonitor, HWND hWindow,
@@ -64,7 +66,7 @@ bool leaveFullscreenMode(HWND hWindow, DXMTWindowState *pState,
 }
 
 bool restoreDisplayMode(HMONITOR hMonitor) {
-  return false;
+  return true;
 }
 
 HMONITOR getWindowMonitor(HWND hWindow) {
